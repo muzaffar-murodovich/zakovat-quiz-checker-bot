@@ -1,11 +1,13 @@
+import os
 import time
 import json
-import threading
 import requests
+import threading
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 QUIZ_ID = 882
 URL = f"https://zakovatklubi.uz/tournaments/{QUIZ_ID}"
 
