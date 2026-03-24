@@ -8,11 +8,13 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-QUIZ_ID = 882
+QUIZ_ID = 930
 URL = f"https://zakovatklubi.uz/tournaments/{QUIZ_ID}"
 
 USERS_FILE = "users.json"
-CHECK_INTERVAL = 30  
+CHECK_INTERVAL = 5
+
+KEY_WORD = "Ishtirok etish"
 
 offset = 0
 notified = False
@@ -92,8 +94,8 @@ def telegram_bot_loop():
 
 def selenium_checker_loop():
     global notified
-
-    print("Monitoring boshlandi")
+    counter = 0
+    print("Selenium monitoring boshlandi...")
 
     options = Options()
     options.add_argument("--headless")
@@ -107,16 +109,26 @@ def selenium_checker_loop():
             driver.get(URL)
             time.sleep(5)
 
+            # Redirect bo'lgan bo'lsa, sahifa hali mavjud emas
+            if driver.current_url.rstrip("/") != URL.rstrip("/"):
+                counter += 1
+                print(f"{counter}. Sahifa hali mavjud emas (redirect)...")
+                time.sleep(CHECK_INTERVAL)
+                continue
+
             page = driver.page_source
 
-            if "Ishtirok etish" in page:
+            if KEY_WORD in page:
                 notified = True
                 broadcast(
-                    "Ro‘yxatdan o‘tish BOSHLANDI!\n\n"
-                    f"{URL}"
+                    "OCHILDI!\n\n"
+                    f"👉 {URL}"
                 )
-                print("Roʻyxatdan oʻtish ochildi. Xabar yuborildi.")
+                print("Xabar yuborildi.")
                 break
+
+            counter += 1
+            print(f"{counter}. Hozircha yopiq...")
             time.sleep(CHECK_INTERVAL)
 
     finally:
