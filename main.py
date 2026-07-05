@@ -4,20 +4,23 @@ import json
 import requests
 import threading
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 
+load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-QUIZ_ID = 930
-URL = f"https://zakovatklubi.uz/tournaments/{QUIZ_ID}"
+FILTER_KEYWORD = os.environ.get("FILTER_KEYWORD", "zakovat quiz")
+CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "20"))
+
+API_URL = "https://api.zakovatklubi.uz/v1/tournament/last"
+TOURNAMENT_URL = "https://zakovatklubi.uz/tournaments/{id}"
 
 USERS_FILE = "users.json"
-CHECK_INTERVAL = 5
+STATE_FILE = "state.json"
 
-KEY_WORD = "Ishtirok etish"
+# Ochilishga shuncha soniya qolganda tez polling rejimiga o'tiladi
+FAST_WINDOW = 180
+FAST_INTERVAL = 2
 
 offset = 0
-notified = False
 lock = threading.Lock()
 
 def load_users():
@@ -27,11 +30,20 @@ def load_users():
     except Exception:
         return set()
 
-
 def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(list(users), f)
 
+def load_notified():
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+def save_notified(ids):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(ids), f)
 
 def send_message(chat_id, text):
     requests.post(
@@ -39,7 +51,6 @@ def send_message(chat_id, text):
         data={"chat_id": chat_id, "text": text},
         timeout=10
     )
-
 
 def broadcast(text):
     users = load_users()
@@ -49,11 +60,10 @@ def broadcast(text):
         except Exception:
             pass
 
-
 def telegram_bot_loop():
     global offset
 
-    print("Bot ishga tushdi")
+    print("Bot ishga tushdi", flush=True)
 
     while True:
         try:
@@ -84,59 +94,84 @@ def telegram_bot_loop():
                     send_message(
                         chat_id,
                         "Botga muvaffaqiyatli ulandingiz\n"
-                        "Roʻyxatdan o‘tish ochilishi bilan xabar yuboraman"
+                        "Roʻyxatdan o‘tish ochilishi bilan xabar yuboriladi"
                     )
 
         except Exception as e:
-            print("Bot xatosi:", e)
+            print("Bot xatosi:", e, flush=True)
 
         time.sleep(2)
 
-def selenium_checker_loop():
-    global notified
+def fetch_tournaments():
+    r = requests.get(API_URL, timeout=15)
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+def matches_filter(tournament):
+    return FILTER_KEYWORD.lower() in tournament.get("title", "").lower()
+
+def check_once(tournaments, notified, now):
+    """Yangi ochilgan turnirlar ro'yxatini va keyingi ochilishgacha qolgan vaqtni qaytaradi."""
+    opened = []
+    next_opening = None
+
+    for t in tournaments:
+        if not matches_filter(t):
+            continue
+
+        start = t.get("start_submission_request_date")
+        end = t.get("end_submission_request_date")
+        if not start or not end:
+            continue
+
+        if t["id"] not in notified and start <= now <= end:
+            opened.append(t)
+        elif now < start:
+            wait = start - now
+            if next_opening is None or wait < next_opening:
+                next_opening = wait
+
+    return opened, next_opening
+
+def api_checker_loop():
+    notified = load_notified()
     counter = 0
-    print("Selenium monitoring boshlandi...")
+    print("API monitoring boshlandi...", flush=True)
 
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
+    while True:
+        try:
+            tournaments = fetch_tournaments()
+            now = int(time.time())
+            opened, next_opening = check_once(tournaments, notified, now)
 
-    driver = webdriver.Chrome(options=options)
-
-    try:
-        while not notified:
-            driver.get(URL)
-            time.sleep(5)
-
-            # Redirect bo'lgan bo'lsa, sahifa hali mavjud emas
-            if driver.current_url.rstrip("/") != URL.rstrip("/"):
-                counter += 1
-                print(f"{counter}. Sahifa hali mavjud emas (redirect)...")
-                time.sleep(CHECK_INTERVAL)
-                continue
-
-            page = driver.page_source
-
-            if KEY_WORD in page:
-                notified = True
+            for t in opened:
                 broadcast(
                     "OCHILDI!\n\n"
-                    f"👉 {URL}"
+                    f"{t['title']}\n"
+                    f"👉 {TOURNAMENT_URL.format(id=t['id'])}"
                 )
-                print("Xabar yuborildi.")
-                break
+                notified.add(t["id"])
+                save_notified(notified)
+                print(f"Xabar yuborildi: {t['id']} — {t['title']}", flush=True)
 
             counter += 1
-            print(f"{counter}. Hozircha yopiq...")
-            time.sleep(CHECK_INTERVAL)
+            if next_opening is not None and next_opening <= FAST_WINDOW:
+                interval = FAST_INTERVAL
+                print(f"{counter}. Ochilishga {next_opening}s qoldi, tez rejim...", flush=True)
+            else:
+                interval = CHECK_INTERVAL
+                if counter % 30 == 0:
+                    print(f"{counter}. Hozircha yangi turnir yo'q...", flush=True)
 
-    finally:
-        driver.quit()
+        except Exception as e:
+            interval = CHECK_INTERVAL
+            print("Monitoring xatosi:", e, flush=True)
+
+        time.sleep(interval)
 
 if __name__ == "__main__":
     t1 = threading.Thread(target=telegram_bot_loop, daemon=True)
-    t2 = threading.Thread(target=selenium_checker_loop, daemon=True)
+    t2 = threading.Thread(target=api_checker_loop, daemon=True)
 
     t1.start()
     t2.start()

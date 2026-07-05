@@ -1,0 +1,12 @@
+[Unit]
+Description=Zakovat quiz checker bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/deploy/zakovat-quiz-checker-bot
+ExecStart=/home/deploy/zakovat-quiz-checker-bot/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
