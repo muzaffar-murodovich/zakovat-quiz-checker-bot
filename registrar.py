@@ -116,7 +116,10 @@ def register(tournament_id, type_request=1, dry_run=False):
 
     dry_run=True bo'lsa POST yubormaydi — faqat payloadni qaytaradi (test uchun).
     """
-    token = login()
+    # Registratsiya haftada bir marta bo'ladi; token opaque va serverda muddati
+    # bo'lishi mumkin, shuning uchun keshga tayanmay har safar yangi login
+    # qilamiz — get_team_members ham, POST ham yangi token bilan ishlaydi.
+    token = login(force=True)
     if not token:
         return False, "Login qilib bo'lmadi (parol yoki tarmoq xatosi)"
 
