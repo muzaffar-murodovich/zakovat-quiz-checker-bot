@@ -8,9 +8,14 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
+
+import registrar
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 FILTER_KEYWORD = os.environ.get("FILTER_KEYWORD", "zakovat quiz")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
+REGISTER_DELAY = int(os.environ.get("REGISTER_DELAY", "10"))
 
 API_URL = "https://api.zakovatklubi.uz/v1/tournament/last"
 TOURNAMENT_URL = "https://zakovatklubi.uz/tournaments/{id}"
@@ -45,15 +50,23 @@ def load_state():
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
-            return set(data), None
-        return set(data.get("notified_ids", [])), data.get("last_notified_at")
+            return set(data), None, set()
+        return (
+            set(data.get("notified_ids", [])),
+            data.get("last_notified_at"),
+            set(data.get("registered_ids", [])),
+        )
     except Exception:
-        return set(), None
+        return set(), None, set()
 
-def save_state(notified_ids, last_notified_at):
+def save_state(notified_ids, last_notified_at, registered_ids):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(
-            {"notified_ids": sorted(notified_ids), "last_notified_at": last_notified_at},
+            {
+                "notified_ids": sorted(notified_ids),
+                "last_notified_at": last_notified_at,
+                "registered_ids": sorted(registered_ids),
+            },
             f
         )
 
@@ -171,11 +184,54 @@ def check_once(tournaments, notified, now_ts):
 
     return opened
 
+def register_after_delay(tournament, type_request, on_done):
+    """OCHILDI xabaridan REGISTER_DELAY soniya keyin Baurlar'ni yozadi.
+
+    Alohida thread'da ishlaydi — checker loop'ni bloklamaydi. Natija
+    faqat ADMIN_CHAT_ID ga yuboriladi. Tugagach on_done(tournament_id)
+    chaqiriladi (registered_ids ni saqlash uchun).
+    """
+    time.sleep(REGISTER_DELAY)
+    url = TOURNAMENT_URL.format(id=tournament["id"])
+    try:
+        ok, msg = registrar.register(tournament["id"], type_request=type_request)
+    except Exception as e:
+        ok, msg = False, f"kutilmagan xato: {e!r}"
+
+    if ok:
+        print(f"Registratsiya OK: {tournament['id']} — {msg}", flush=True)
+        text = f"✅ {tournament['title']}\n{msg}"
+    else:
+        print(f"Registratsiya XATO: {tournament['id']} — {msg}", flush=True)
+        text = (
+            f"❌ Baurlar ro'yxatdan o'tolmadi\n{tournament['title']}\n"
+            f"Sabab: {msg}\n👉 qo'lda: {url}"
+        )
+
+    on_done(tournament["id"])
+
+    if ADMIN_CHAT_ID:
+        try:
+            send_message(ADMIN_CHAT_ID, text)
+        except Exception as e:
+            print(f"Admin xabari yuborilmadi: {e!r}", flush=True)
+
+
 def api_checker_loop():
-    notified, last_notified_at = load_state()
+    notified, last_notified_at, registered = load_state()
     counter = 0
     announced = None
     print("API monitoring boshlandi...", flush=True)
+
+    def mark_registered(tid):
+        # Register thread'idan (10s keyin) chaqiriladi. Fayldan qayta o'qib
+        # merge qilamiz — shu orada loop yangilagan notified/last_notified_at
+        # qiymatlarini bosib yozib yubormaslik uchun.
+        with lock:
+            n, lna, reg = load_state()
+            reg.add(tid)
+            registered.add(tid)
+            save_state(n, lna, reg)
 
     while True:
         now = datetime.now(TZ)
@@ -204,8 +260,17 @@ def api_checker_loop():
                 )
                 notified.add(t["id"])
                 last_notified_at = now_ts
-                save_state(notified, last_notified_at)
+                save_state(notified, last_notified_at, registered)
                 print(f"Xabar yuborildi: {t['id']} — {t['title']}", flush=True)
+
+                # OCHILDI xabaridan REGISTER_DELAY (10s) keyin Baurlar'ni yozamiz.
+                # Alohida thread — loop bloklanmaydi, boshqa quiz'lar tekshirilaveradi.
+                if t["id"] not in registered:
+                    threading.Thread(
+                        target=register_after_delay,
+                        args=(t, t.get("type_request", 1), mark_registered),
+                        daemon=True,
+                    ).start()
 
             counter += 1
             if counter % 60 == 0:
