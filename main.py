@@ -70,20 +70,43 @@ def save_state(notified_ids, last_notified_at, registered_ids):
             f
         )
 
+# Keep-alive session: har xabarda yangi TLS ulanish ochilmasin.
+# Parallel broadcast uchun pool obunachilar soniga yetarli bo'lishi kerak.
+_tg_session = requests.Session()
+_tg_session.mount(
+    "https://",
+    requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=32),
+)
+
 def send_message(chat_id, text):
-    requests.post(
+    _tg_session.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": chat_id, "text": text},
         timeout=10
     )
 
+def _send_safe(chat_id, text):
+    try:
+        send_message(chat_id, text)
+    except Exception:
+        pass
+
 def broadcast(text):
+    """Barcha obunachilarga PARALLEL yuboradi.
+
+    Ketma-ket yuborish Telegram sekinlashganda obunachi boshiga ~1s+
+    yo'qotadi (2026-07-13 da 10 obunachi = ~13s kechikish bo'lgan).
+    """
     users = load_users()
+    started = time.time()
+    threads = []
     for chat_id in users:
-        try:
-            send_message(chat_id, text)
-        except Exception:
-            pass
+        th = threading.Thread(target=_send_safe, args=(chat_id, text), daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(timeout=15)
+    print(f"Broadcast: {len(users)} obunachi, {time.time() - started:.1f}s", flush=True)
 
 def telegram_bot_loop():
     global offset
@@ -92,7 +115,7 @@ def telegram_bot_loop():
 
     while True:
         try:
-            r = requests.get(
+            r = _tg_session.get(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates",
                 params={"offset": offset, "timeout": 30},
                 timeout=35
@@ -127,8 +150,14 @@ def telegram_bot_loop():
 
         time.sleep(2)
 
+# Alohida keep-alive session — TLS handshake har poll'da takrorlanmasin.
+# Faqat checker thread ishlatadi.
+_api_session = requests.Session()
+
 def fetch_tournaments():
-    r = requests.get(API_URL, timeout=15)
+    # Qisqa timeout: ochilish daqiqasida API sekinlashsa ham poll uzoq
+    # qotib qolmasin (xato -> POLL_INTERVAL kutib qayta urinish).
+    r = _api_session.get(API_URL, timeout=(3, 5))
     r.raise_for_status()
     return r.json().get("data", [])
 
@@ -253,6 +282,7 @@ def api_checker_loop():
             now_ts = int(time.time())
 
             for t in check_once(tournaments, notified, now_ts):
+                print(f"TOPILDI: {t['id']} — {t['title']}", flush=True)
                 broadcast(
                     "OCHILDI!\n\n"
                     f"{t['title']}\n"
