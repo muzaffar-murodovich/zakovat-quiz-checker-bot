@@ -67,6 +67,7 @@ Serverda (`ssh myserver`, Ubuntu, user `deploy`) **user-level systemd** servis s
 
 - **Login limiti:** notoʻgʻri parolда 5 urinishdan keyin akkaunt bloklanadi. `registrar.login()` xato parolni aniqlasa `_auth_blocked` bilan qayta urinmaydi.
 - **Token yangiligi:** token opaque (muddat oʻqib boʻlmaydi). Registratsiya haftada bir marta boʻlgani uchun `register()` har safar `login(force=True)` bilan yangi token oladi — eskirish muammosi boʻlmaydi.
-- **`match_id == tournament_id`** — Zakovat Quiz payloadida.
+- **`match_id` faqat `type_request == 2` da yuboriladi** (manba: `GET /tournament/{id}/accessible-match`). Zakovat Quiz `type_request == 1` — `match_id` UMUMAN yuborilmaydi. `mainPersonIds` da kapitanning o'z ID'si (`GET /user/get-me`) bo'lmasligi kerak — sayt frontend'i uni filtrlaydi. 2026-07-13 da noto'g'ri `match_id = tournament_id` yuborilgan: API "success" qaytargan, lekin jamoa ro'yxatga tushmagan.
+- **Registratsiya tekshiriladi:** POST'dan keyin `GET /tournament/{id}/teams` da jamoa haqiqatan bor-yo'qligi tasdiqlanadi (`is_team_registered()`); API javobiga ko'r-ko'rona ishonilmaydi.
 - Registratsiya xatolari hech qachon loop'larni yiqitmaydi (hammasi try/except, alohida thread).
 - Loglar `print(..., flush=True)` — journalctl'da darhol koʻrinishi uchun.
