@@ -214,7 +214,7 @@ def check_once(tournaments, notified, now_ts):
     return opened
 
 def register_after_delay(tournament, type_request, on_done):
-    """OCHILDI xabaridan REGISTER_DELAY soniya keyin Baurlar'ni yozadi.
+    """OCHILDI xabaridan REGISTER_DELAY soniya keyin jamoani ro'yxatga yozadi.
 
     Alohida thread'da ishlaydi — checker loop'ni bloklamaydi. Natija
     faqat ADMIN_CHAT_ID ga yuboriladi. Tugagach on_done(tournament_id)
@@ -233,7 +233,7 @@ def register_after_delay(tournament, type_request, on_done):
     else:
         print(f"Registratsiya XATO: {tournament['id']} — {msg}", flush=True)
         text = (
-            f"❌ Baurlar ro'yxatdan o'tolmadi\n{tournament['title']}\n"
+            f"❌ Jamoa ro'yxatdan o'tolmadi\n{tournament['title']}\n"
             f"Sabab: {msg}\n👉 qo'lda: {url}"
         )
 
@@ -293,7 +293,7 @@ def api_checker_loop():
                 save_state(notified, last_notified_at, registered)
                 print(f"Xabar yuborildi: {t['id']} — {t['title']}", flush=True)
 
-                # OCHILDI xabaridan REGISTER_DELAY (10s) keyin Baurlar'ni yozamiz.
+                # OCHILDI xabaridan REGISTER_DELAY (10s) keyin jamoani yozamiz.
                 # Alohida thread — loop bloklanmaydi, boshqa quiz'lar tekshirilaveradi.
                 if t["id"] not in registered:
                     threading.Thread(

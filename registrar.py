@@ -139,7 +139,10 @@ def is_team_registered(token, tournament_id, team_id=TEAM_ID):
 
 
 def get_team_members(token, team_id=TEAM_ID):
-    """Kapitan bo'lgan jamoaning a'zo ID'larini qaytaradi. Xato bo'lsa []."""
+    """Kapitan bo'lgan jamoaning (a'zo ID'lari, nomi) juftligini qaytaradi.
+
+    Xato bo'lsa ([], None).
+    """
     try:
         r = requests.get(
             f"{API_ROOT}/user/leader-team",
@@ -149,11 +152,11 @@ def get_team_members(token, team_id=TEAM_ID):
         data = r.json()
     except Exception as e:
         _log(f"leader-team so'rovi xatosi: {e!r}")
-        return []
+        return [], None
 
     if data.get("code") != 1:
         _log(f"leader-team xatosi: {data.get('message')}")
-        return []
+        return [], None
 
     teams = data.get("data")
     teams = teams if isinstance(teams, list) else [teams]
@@ -164,8 +167,8 @@ def get_team_members(token, team_id=TEAM_ID):
             persons = t.get("persons") or t.get("players") or t.get("mainPersons") or []
             ids = [p["id"] for p in persons if isinstance(p, dict) and p.get("id")]
             if ids:
-                return ids
-    return []
+                return ids, t.get("title")
+    return [], None
 
 
 def build_payload(tournament_id, member_ids, type_request=1, match_id=None):
@@ -190,7 +193,7 @@ def build_payload(tournament_id, member_ids, type_request=1, match_id=None):
 
 
 def register(tournament_id, type_request=1, dry_run=False):
-    """Baurlar jamoasini turnirга yozadi. (ok, message) qaytaradi.
+    """Foydalanuvchi jamoasini (TEAM_ID) turnirga yozadi. (ok, message) qaytaradi.
 
     dry_run=True bo'lsa POST yubormaydi — faqat payloadni qaytaradi (test uchun).
     """
@@ -201,9 +204,11 @@ def register(tournament_id, type_request=1, dry_run=False):
     if not token:
         return False, "Login qilib bo'lmadi (parol yoki tarmoq xatosi)"
 
-    members = get_team_members(token) or FALLBACK_PERSON_IDS
+    members, team_title = get_team_members(token)
+    members = members or FALLBACK_PERSON_IDS
     if not members:
         return False, "Jamoa a'zolari aniqlanmadi"
+    team_name = team_title or f"Jamoa #{TEAM_ID}"
 
     # Sayt kapitanning o'z ID'sini mainPersonIds'dan chiqarib yuboradi —
     # backend uni o'zi qo'shadi. Biz ham xuddi shunday qilamiz.
@@ -261,13 +266,13 @@ def register(tournament_id, type_request=1, dry_run=False):
     time.sleep(3)
     seen = is_team_registered(token, tournament_id)
     if seen is True:
-        return True, f"Baurlar ro'yxatdan o'tdi, ro'yxatda tasdiqlandi ({len(members)} a'zo + kapitan)"
+        return True, f"{team_name} ro'yxatdan o'tdi, ro'yxatda tasdiqlandi ({len(members)} a'zo + kapitan)"
     if seen is False:
         return False, (
             "API 'success' dedi, lekin jamoa turnir ro'yxatida KO'RINMAYAPTI — "
             "tezda qo'lda ro'yxatdan o'ting!"
         )
     return True, (
-        f"Baurlar ro'yxatdan o'tdi ({len(members)} a'zo + kapitan), "
+        f"{team_name} ro'yxatdan o'tdi ({len(members)} a'zo + kapitan), "
         "lekin ro'yxatni tekshirib bo'lmadi — saytdan qo'lda tasdiqlang"
     )
