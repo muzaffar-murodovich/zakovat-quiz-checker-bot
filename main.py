@@ -16,6 +16,14 @@ FILTER_KEYWORD = os.environ.get("FILTER_KEYWORD", "zakovat quiz")
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
 REGISTER_DELAY = int(os.environ.get("REGISTER_DELAY", "10"))
+# Admin jamoani qo'lda tasdiqlashi uchun /tournament/{id}/teams ro'yxati
+# POST'dan darhol keyin emas, kechroq yangilanadi — shuning uchun haqiqiy
+# tasdiqni bu qadar kutib keyin tekshiramiz (default 30 daqiqa). Diqqat:
+# kuzatuvlarga ko'ra bu ro'yxat oyna ichida umuman bo'sh qolishi mumkin
+# (masalan 2026-07-20 da soʻrovdan ~2 soat o'tsa ham butun turnir uchun 0
+# jamoa ko'rinardi) — shuning uchun bu tekshiruv faqat ma'lumot uchun,
+# "hali ko'rinmayapti" degani albatta xato degani emas.
+REGISTER_VERIFY_DELAY = int(os.environ.get("REGISTER_VERIFY_DELAY", "1800"))
 
 API_URL = "https://api.zakovatklubi.uz/v1/tournament/last"
 TOURNAMENT_URL = "https://zakovatklubi.uz/tournaments/{id}"
@@ -213,12 +221,57 @@ def check_once(tournaments, notified, now_ts):
 
     return opened
 
+def _notify_admin(text):
+    if not ADMIN_CHAT_ID:
+        return
+    try:
+        send_message(ADMIN_CHAT_ID, text)
+    except Exception as e:
+        print(f"Admin xabari yuborilmadi: {e!r}", flush=True)
+
+
+def verify_after_delay(tournament):
+    """REGISTER_VERIFY_DELAY soniyadan keyin jamoa haqiqatan ro'yxatda
+    ko'rinadimi tekshiradi (admin shu vaqt ichida tasdiqlagan bo'lishi kerak)
+    va faqat natija bo'yicha admin'ga xabar beradi.
+    """
+    time.sleep(REGISTER_VERIFY_DELAY)
+    url = TOURNAMENT_URL.format(id=tournament["id"])
+    try:
+        seen, msg = registrar.check_registration(tournament["id"])
+    except Exception as e:
+        seen, msg = None, f"kutilmagan xato: {e!r}"
+
+    minutes = REGISTER_VERIFY_DELAY // 60
+    if seen is True:
+        print(f"Tasdiqlandi: {tournament['id']} — {msg}", flush=True)
+        text = f"✅ Tasdiqlandi: {tournament['title']}\n{msg}"
+    elif seen is False:
+        print(f"Hali tasdiqlanmagan: {tournament['id']} — {msg}", flush=True)
+        text = (
+            f"ℹ️ {tournament['title']}\n"
+            f"So'rov yuborilgan, {minutes} daqiqadan keyin ham ro'yxatda hali ko'rinmayapti — "
+            "bu odatiy holat (admin tasdiqlashi soatlab/kunlab cho'zilishi mumkin), "
+            "xato degani emas. Xohlasangiz tekshiring: "
+            f"{url}"
+        )
+    else:
+        print(f"Tekshirib bo'lmadi: {tournament['id']} — {msg}", flush=True)
+        text = f"ℹ️ {tournament['title']}\n{msg} — qo'lda tekshiring: {url}"
+
+    _notify_admin(text)
+
+
 def register_after_delay(tournament, type_request, on_done):
     """OCHILDI xabaridan REGISTER_DELAY soniya keyin jamoani ro'yxatga yozadi.
 
     Alohida thread'da ishlaydi — checker loop'ni bloklamaydi. Natija
     faqat ADMIN_CHAT_ID ga yuboriladi. Tugagach on_done(tournament_id)
     chaqiriladi (registered_ids ni saqlash uchun).
+
+    POST muvaffaqiyatli bo'lsa, /tournament/{id}/teams ro'yxati admin
+    tasdiqlashidan keyin yangilanadigani uchun haqiqiy tasdiqni darhol emas,
+    verify_after_delay() orqali kechroq (fon thread'da) tekshiramiz.
     """
     time.sleep(REGISTER_DELAY)
     url = TOURNAMENT_URL.format(id=tournament["id"])
@@ -228,8 +281,8 @@ def register_after_delay(tournament, type_request, on_done):
         ok, msg = False, f"kutilmagan xato: {e!r}"
 
     if ok:
-        print(f"Registratsiya OK: {tournament['id']} — {msg}", flush=True)
-        text = f"✅ {tournament['title']}\n{msg}"
+        print(f"Registratsiya so'rovi yuborildi: {tournament['id']} — {msg}", flush=True)
+        text = f"✅ {tournament['title']}\n{msg}\n(admin tasdig'ini kutish kerak)"
     else:
         print(f"Registratsiya XATO: {tournament['id']} — {msg}", flush=True)
         text = (
@@ -238,12 +291,12 @@ def register_after_delay(tournament, type_request, on_done):
         )
 
     on_done(tournament["id"])
+    _notify_admin(text)
 
-    if ADMIN_CHAT_ID:
-        try:
-            send_message(ADMIN_CHAT_ID, text)
-        except Exception as e:
-            print(f"Admin xabari yuborilmadi: {e!r}", flush=True)
+    if ok:
+        threading.Thread(
+            target=verify_after_delay, args=(tournament,), daemon=True
+        ).start()
 
 
 def api_checker_loop():

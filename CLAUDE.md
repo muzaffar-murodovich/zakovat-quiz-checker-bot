@@ -39,6 +39,7 @@ Roʻyxatdan oʻtish **faqat dushanba (kamdan-kam seshanba) Toshkent vaqti 10:30�
 | `TEAM_ID` | roʻyxatga yoziladigan jamoa (default 28631, Baurlar) |
 | `ADMIN_CHAT_ID` | registratsiya natijasi yuboriladigan chat |
 | `REGISTER_DELAY` | OCHILDI'dan keyin registratsiyagacha kutish (default 10s) |
+| `REGISTER_VERIFY_DELAY` | POST'dan keyin ro'yxatda tasdiqni tekshirishgacha kutish, admin tasdiqlashi uchun (default 1800s / 30 daq) |
 | `MAIN_PERSON_IDS` | zaxira aʼzo ID'lari (leader-team olinmasa) |
 
 ## Ishga tushirish
@@ -68,6 +69,6 @@ Serverda (`ssh myserver`, Ubuntu, user `deploy`) **user-level systemd** servis s
 - **Login limiti:** notoʻgʻri parolда 5 urinishdan keyin akkaunt bloklanadi. `registrar.login()` xato parolni aniqlasa `_auth_blocked` bilan qayta urinmaydi.
 - **Token yangiligi:** token opaque (muddat oʻqib boʻlmaydi). Registratsiya haftada bir marta boʻlgani uchun `register()` har safar `login(force=True)` bilan yangi token oladi — eskirish muammosi boʻlmaydi.
 - **`match_id` faqat `type_request == 2` da yuboriladi** (manba: `GET /tournament/{id}/accessible-match`). Zakovat Quiz `type_request == 1` — `match_id` UMUMAN yuborilmaydi. `mainPersonIds` da kapitanning o'z ID'si (`GET /user/get-me`) bo'lmasligi kerak — sayt frontend'i uni filtrlaydi. 2026-07-13 da noto'g'ri `match_id = tournament_id` yuborilgan: API "success" qaytargan, lekin jamoa ro'yxatga tushmagan.
-- **Registratsiya tekshiriladi:** POST'dan keyin `GET /tournament/{id}/teams` da jamoa haqiqatan bor-yo'qligi tasdiqlanadi (`is_team_registered()`); API javobiga ko'r-ko'rona ishonilmaydi.
+- **Registratsiya tekshiriladi, lekin kechiktirib:** `GET /tournament/{id}/teams` ro'yxati POST'dan darhol keyin emas — admin jamoani qo'lda tasdiqlagandan keyin yangilanadi. Shu sabab `registrar.register()` POST'dan keyin darhol tekshirmaydi (avval tekshirar edi va deyarli har doim yolg'on "XATO" berardi); `main.py:verify_after_delay()` `REGISTER_VERIFY_DELAY` (default 30 daq) dan keyin `registrar.check_registration()` bilan alohida tekshiradi va faqat shunda hali ko'rinmasa admin'ga ma'lumot beradi (bu ⚠️ emas, ℹ️ — kunlab cho'zilishi mumkinligi sabab xato degani emas).
 - Registratsiya xatolari hech qachon loop'larni yiqitmaydi (hammasi try/except, alohida thread).
 - Loglar `print(..., flush=True)` — journalctl'da darhol koʻrinishi uchun.

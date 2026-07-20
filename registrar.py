@@ -5,7 +5,6 @@ bilan ishlaydi: sign-in bilan token oladi, /user/request bilan jamoani yozadi.
 """
 import os
 import threading
-import time
 
 import requests
 
@@ -261,18 +260,29 @@ def register(tournament_id, type_request=1, dry_run=False):
         detail = "; ".join(f"{k}: {v}" for k, v in errors.items()) if errors else msg
         return False, detail
 
-    # API "success" desa ham ishonmaymiz (2026-07-13 da success kelgan, lekin
-    # jamoa ro'yxatga tushmagan) — turnir ro'yxatida haqiqatan bormi tekshiramiz.
-    time.sleep(3)
-    seen = is_team_registered(token, tournament_id)
+    # /tournament/{id}/teams ro'yxati POST'dan darhol keyin emas — admin
+    # jamoani qo'lda tasdiqlagandan keyin yangilanadi. Shu sabab bu yerda
+    # darhol tekshirmaymiz (avval tekshirilardi va deyarli har doim
+    # "hali ko'rinmayapti" deb yolg'on XATO berardi). Haqiqiy tasdiqni
+    # check_registration() orqali kechroq (masalan bir necha daqiqadan keyin)
+    # alohida so'raladi — qarang main.py:register_after_delay.
+    return True, f"{team_name} uchun so'rov yuborildi ({len(members)} a'zo + kapitan)"
+
+
+def check_registration(tournament_id, team_id=TEAM_ID):
+    """Jamoa ro'yxatda ko'rinadimi — kechroq (admin tasdiqlagandan keyin)
+    alohida chaqirish uchun. (True/False/None, xabar) qaytaradi.
+
+    Yangi token bilan ishlaydi — register() paytidagi token muddati
+    o'tgan bo'lishi mumkin.
+    """
+    token = login(force=True)
+    if not token:
+        return None, "Login qilib bo'lmadi — tekshirib bo'lmadi"
+
+    seen = is_team_registered(token, tournament_id, team_id)
     if seen is True:
-        return True, f"{team_name} ro'yxatdan o'tdi, ro'yxatda tasdiqlandi ({len(members)} a'zo + kapitan)"
+        return True, "jamoa ro'yxatda tasdiqlandi"
     if seen is False:
-        return False, (
-            "API 'success' dedi, lekin jamoa turnir ro'yxatida KO'RINMAYAPTI — "
-            "tezda qo'lda ro'yxatdan o'ting!"
-        )
-    return True, (
-        f"{team_name} ro'yxatdan o'tdi ({len(members)} a'zo + kapitan), "
-        "lekin ro'yxatni tekshirib bo'lmadi — saytdan qo'lda tasdiqlang"
-    )
+        return False, "jamoa hali ro'yxatda ko'rinmayapti"
+    return None, "ro'yxatni tekshirib bo'lmadi (API xatosi)"
