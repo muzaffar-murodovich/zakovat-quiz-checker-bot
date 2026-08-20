@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import registrar
+import confirmer
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 FILTER_KEYWORD = os.environ.get("FILTER_KEYWORD", "zakovat quiz")
@@ -24,6 +25,11 @@ REGISTER_DELAY = int(os.environ.get("REGISTER_DELAY", "10"))
 # jamoa ko'rinardi) — shuning uchun bu tekshiruv faqat ma'lumot uchun,
 # "hali ko'rinmayapti" degani albatta xato degani emas.
 REGISTER_VERIFY_DELAY = int(os.environ.get("REGISTER_VERIFY_DELAY", "1800"))
+# Kapitan so'rov yuborgach har bir a'zoga taklif boradi va jamoa faqat hamma
+# a'zo tasdiqlagandan keyin moderatsiyaga o'tadi — shuni avtomatlashtiramiz.
+# 0 bo'lsa a'zolar tasdig'i o'tkazilmaydi (members.json yo'q bo'lsa ham).
+CONFIRM_MEMBERS = os.environ.get("CONFIRM_MEMBERS", "1") not in ("0", "false", "no", "")
+CONFIRM_DELAY = int(os.environ.get("CONFIRM_DELAY", "15"))
 
 API_URL = "https://api.zakovatklubi.uz/v1/tournament/last"
 TOURNAMENT_URL = "https://zakovatklubi.uz/tournaments/{id}"
@@ -262,6 +268,31 @@ def verify_after_delay(tournament):
     _notify_admin(text)
 
 
+def confirm_after_delay(tournament):
+    """A'zolar nomidan turnir taklifini avtomatik qabul qiladi.
+
+    Kapitanning so'rovidan keyin har bir a'zoga taklif boradi; jamoa
+    moderatsiyaga faqat hammasi tasdiqlagandan keyin o'tadi. Taklif API'da
+    darhol ko'rinmasligi mumkin — confirmer.confirm_all() o'zi qayta uradi.
+    """
+    time.sleep(CONFIRM_DELAY)
+    try:
+        results = confirmer.confirm_all(tournament["id"])
+    except Exception as e:
+        print(f"A'zolar tasdig'i XATO: {e!r}", flush=True)
+        _notify_admin(f"❌ A'zolar tasdig'ida xato\n{tournament['title']}\n{e!r}")
+        return
+
+    if not results:
+        print("A'zolar ro'yxati bo'sh — tasdiqlash o'tkazilmadi", flush=True)
+        return
+
+    summary = confirmer.format_results(results)
+    print(f"A'zolar tasdig'i: {tournament['id']}\n{summary}", flush=True)
+    all_ok = all(status == "ok" for status, _ in results.values())
+    _notify_admin(f"{'✅' if all_ok else '⚠️'} {tournament['title']}\n{summary}")
+
+
 def register_after_delay(tournament, type_request, on_done):
     """OCHILDI xabaridan REGISTER_DELAY soniya keyin jamoani ro'yxatga yozadi.
 
@@ -294,6 +325,10 @@ def register_after_delay(tournament, type_request, on_done):
     _notify_admin(text)
 
     if ok:
+        if CONFIRM_MEMBERS:
+            threading.Thread(
+                target=confirm_after_delay, args=(tournament,), daemon=True
+            ).start()
         threading.Thread(
             target=verify_after_delay, args=(tournament,), daemon=True
         ).start()

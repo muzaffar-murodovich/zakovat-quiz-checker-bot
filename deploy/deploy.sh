@@ -14,6 +14,7 @@ rsync -av \
     --exclude '.env' \
     --exclude 'users.json' \
     --exclude 'state.json' \
+    --exclude 'members.json' \
     --exclude '__pycache__' \
     --exclude '.vscode' \
     ./ "$SERVER:$DEST/"

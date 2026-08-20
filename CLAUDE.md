@@ -7,15 +7,17 @@ Zakovat "Quiz" turnirlarini kuzatib, obunachilarга xabar beruvchi va foydalanu
 1. **Kuzatadi** — `api.zakovatklubi.uz/v1/tournament/last` ni poll qilib, nomida "Zakovat Quiz" bor yangi turnir roʻyxati ochilishini kutadi.
 2. **Xabar beradi** — roʻyxat ochilganda barcha Telegram obunachilariga (`/start` bosganlar) "OCHILDI!" yuboradi.
 3. **Roʻyxatga yozadi** — xabardan `REGISTER_DELAY` (10s) keyin foydalanuvchining jamoasini API orqali turnirga yozadi va natijani admin'ga xabar qiladi.
+4. **A'zolar nomidan tasdiqlaydi** — so'rovdan `CONFIRM_DELAY` (15s) keyin har bir a'zoning akkauntiga kirib, kelgan taklifni ("Qabul qilish") avtomatik tasdiqlaydi.
 
 ## Arxitektura
 
-Ikkita fayl, uchta thread (`main.py` da ishga tushadi):
+Uchta fayl (`main.py` da ishga tushadi):
 
 - **[main.py](main.py)** — ikki loop bitta jarayonda:
   - `telegram_bot_loop()` — Telegram `getUpdates` long-polling; `/start` bosgan chat'larni `users.json` ga yozadi.
   - `api_checker_loop()` — turnir API'sini poll qiladi, trigger boʻlganda `broadcast()` va (alohida thread'da) `register_after_delay()` chaqiradi.
 - **[registrar.py](registrar.py)** — brauzersiz API registratsiya: `login()` (`POST /v1/user/sign-in` → Bearer token) → `get_team_members()` (`GET /v1/user/leader-team`) → `register()` (`POST /v1/user/request`).
+- **[confirmer.py](confirmer.py)** — a'zolar nomidan taklifni tasdiqlash: har bir a'zo uchun `login()` → `pending_requests()` (`GET /v1/user/transfer-request`) → `accept()` (`POST /v1/user/accept-transfer-request/{id}`). Qo'lda ham ishlaydi: `python confirmer.py --list` / `python confirmer.py <tournament_id> [--dry-run]`.
 
 **Selenium/Playwright ishlatilmaydi** — hammasi to'g'ridan-to'g'ri JSON API orqali. (Eski brauzer-asosli variant `~/tech/zk-auto` da arxivlangan.)
 
@@ -26,6 +28,7 @@ Roʻyxatdan oʻtish **faqat dushanba (kamdan-kam seshanba) Toshkent vaqti 10:30�
 ## State
 
 - `users.json` — obunachi chat ID'lari (git'da yoʻq, runtime'da yaratiladi).
+- `members.json` — jamoa a'zolarining login ma'lumotlari (`[{"name","phone","password"}]`), taklifni ularning nomidan tasdiqlash uchun. Git'da va deploy'da yoʻq — serverda qoʻlda yaratiladi ([members.example.json](members.example.json) namuna). Fayl boʻlmasa tasdiqlash bosqichi shunchaki oʻtkazib yuboriladi.
 - `state.json` — `{notified_ids, last_notified_at, registered_ids}`. Idempotentlik: bir turnirga bir marta xabar + bir marta registratsiya. `load_state()` eski formatlarni (oddiy list, `registered_ids`siz dict) ham oʻqiydi.
 
 ## Konfiguratsiya (`.env`, git'da yoʻq)
@@ -41,6 +44,11 @@ Roʻyxatdan oʻtish **faqat dushanba (kamdan-kam seshanba) Toshkent vaqti 10:30�
 | `REGISTER_DELAY` | OCHILDI'dan keyin registratsiyagacha kutish (default 10s) |
 | `REGISTER_VERIFY_DELAY` | POST'dan keyin ro'yxatda tasdiqni tekshirishgacha kutish, admin tasdiqlashi uchun (default 1800s / 30 daq) |
 | `MAIN_PERSON_IDS` | zaxira aʼzo ID'lari (leader-team olinmasa) |
+| `CONFIRM_MEMBERS` | aʼzolar tasdigʻini avtomatlashtirish (default 1; `0` — oʻchiq) |
+| `CONFIRM_DELAY` | soʻrovdan keyin tasdiqlashgacha kutish (default 15s) |
+| `CONFIRM_ATTEMPTS` | taklif topilmasa nechа marta qayta urinish (default 5) |
+| `CONFIRM_RETRY` | qayta urinishlar oraligʻi (default 30s) |
+| `MEMBERS_FILE` | aʼzolar login fayli (default `members.json`) |
 
 ## Ishga tushirish
 
@@ -70,5 +78,7 @@ Serverda (`ssh myserver`, Ubuntu, user `deploy`) **user-level systemd** servis s
 - **Token yangiligi:** token opaque (muddat oʻqib boʻlmaydi). Registratsiya haftada bir marta boʻlgani uchun `register()` har safar `login(force=True)` bilan yangi token oladi — eskirish muammosi boʻlmaydi.
 - **`match_id` faqat `type_request == 2` da yuboriladi** (manba: `GET /tournament/{id}/accessible-match`). Zakovat Quiz `type_request == 1` — `match_id` UMUMAN yuborilmaydi. `mainPersonIds` da kapitanning o'z ID'si (`GET /user/get-me`) bo'lmasligi kerak — sayt frontend'i uni filtrlaydi. 2026-07-13 da noto'g'ri `match_id = tournament_id` yuborilgan: API "success" qaytargan, lekin jamoa ro'yxatga tushmagan.
 - **Registratsiya tekshiriladi, lekin kechiktirib:** `GET /tournament/{id}/teams` ro'yxati POST'dan darhol keyin emas — admin jamoani qo'lda tasdiqlagandan keyin yangilanadi. Shu sabab `registrar.register()` POST'dan keyin darhol tekshirmaydi (avval tekshirar edi va deyarli har doim yolg'on "XATO" berardi); `main.py:verify_after_delay()` `REGISTER_VERIFY_DELAY` (default 30 daq) dan keyin `registrar.check_registration()` bilan alohida tekshiradi va faqat shunda hali ko'rinmasa admin'ga ma'lumot beradi (bu ⚠️ emas, ℹ️ — kunlab cho'zilishi mumkinligi sabab xato degani emas).
+- **Aʼzolar tasdigʻi majburiy:** kapitan `POST /user/request` yuborgach, har bir aʼzoga taklif boradi ("Siz {jamoa} bilan {turnir} turnirida qatnashmoqchimisiz?") va jamoa moderatsiyaga faqat HAMMASI qabul qilgandan keyin oʻtadi. Endpoint'lar sayt bundle'idan aniqlangan (`/profile/transfers`): `GET /user/transfer-request` (ro'yxat), `POST /user/accept-transfer-request/{id}` (qabul), `POST /user/cancel-transfer-request/{id}` (rad). Taklif obyektida `is_owner == 0` — taklif shu odamga kelgan degani; `type` 3/4 — turnir bilan bogʻliq takliflar. Taklif API'da darhol koʻrinmasligi mumkin, shuning uchun `confirm_all()` qayta uradi.
+- Har bir aʼzo uchun ham login limiti amal qiladi — `confirmer` notoʻgʻri parolni aniqlasa oʻsha telefonni `_blocked_phones` ga qoʻshib qayta urinmaydi.
 - Registratsiya xatolari hech qachon loop'larni yiqitmaydi (hammasi try/except, alohida thread).
 - Loglar `print(..., flush=True)` — journalctl'da darhol koʻrinishi uchun.
